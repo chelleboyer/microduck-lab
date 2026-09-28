@@ -14836,9 +14836,43 @@ Committed: `brain/controllers.py` (the knob, ships OFF), `scripts/probe_ball_los
 
 ## Hopscotch: hop forward, land on both feet / the left foot / the right foot
 
-### H1. [ ] The three hop recipes find a flight at all (2026-09-28)
+### H1. [~] The three hop recipes find a flight at all (2026-09-28) — `hop_both` YES: 27/32 clean hops on honest BAM, 4.9 cm, 0 falls
 
-**Built, not trained.** `behaviors/hop.py` registers `hop_both`, `hop_left` and
+**Answer for `hop_both` (2026-09-28, CPU, 8 envs, the three-stage ladder, 5M steps total):**
+the exported ONNX policy, deterministic, seeds 200-231, 3 s episodes from standing:
+
+| run | physics it is evaluated on | flight | clean two-foot landing | cm forward (median, range) | air ms (median) | landing held | fell |
+|---|---|---|---|---|---|---|---|
+| `hop-both-s1` (xml, 1.5M) | xml, action delay on | 10/16 | 6/16 | 1.6-6.0 | 60 | 93-100 % | 0/16 |
+| `hop-both-s1` | xml, action delay OFF | 0/16 | 0/16 | - | - | - | 0/16 |
+| `hop-both-s2` (BAM x1.3, 3M) | BAM x1.3 | 20/24 | 20/24 | 4.2 (1.8-6.6) | 60 | 100 % | 0/24 |
+| `hop-both-s3` (BAM x1.0, 5M) | **BAM x1.0, 50 ms floor** | 27/32 | **27/32** | **4.9 (3.9-7.3)** | 100 | 100 % | **0/32** |
+| `hop-both-s3` | BAM x1.0 + domain rand + random yaw | 26/32 | 26/32 | 5.1 (3.7-6.2) | 80 | 100 % | 0/32 |
+
+Two findings worth keeping:
+- **The stage-1 (xml) hop needs action delay.** It hops with the 3-6 step delay the
+  xml path trains with, and never without it (row 2). `render-rollout` builds its env
+  with `action_delay=False`, so its 16 videos of this policy showed no hop at all.
+  Measure hops with the delay on, or you will conclude a hopping policy stands still.
+  On BAM the bus lag is part of the actuator model and this stops mattering.
+- **The 50 ms stage-3 floor is reachable.** The learned push flies ~100 ms. The open-loop
+  push measured in `microduck_rl`'s `measure_hop.py` managed ~30 ms, so the
+  "lower the floor" note below was not needed for `hop_both`.
+
+Commands (seeds and knobs as above; each stage `--init-from` the previous):
+
+```bash
+MICRODUCK_ACTUATOR=xml MICRODUCK_HOP_MIN_AIR_S=0.03 MICRODUCK_HOP_TARGET_FWD=0.02 \
+  uv run train-behavior hop_both --envs 8 --steps 1500000 --run-name hop-both-s1
+MICRODUCK_ACTUATOR=bam MICRODUCK_BAM_CURRENT_SCALE=1.3 MICRODUCK_HOP_MIN_AIR_S=0.04 MICRODUCK_HOP_TARGET_FWD=0.03 \
+  uv run train-behavior hop_both --envs 8 --steps 3000000 --init-from runs/hop-both-s1 --run-name hop-both-s2
+MICRODUCK_ACTUATOR=bam MICRODUCK_BAM_CURRENT_SCALE=1.0 MICRODUCK_HOP_MIN_AIR_S=0.05 MICRODUCK_HOP_TARGET_FWD=0.04 \
+  uv run train-behavior hop_both --envs 8 --steps 5000000 --init-from runs/hop-both-s2 --run-name hop-both-s3
+```
+
+Still open: `hop_left` / `hop_right` (warm-started from `hop-both-s3`, running).
+
+**Built 2026-09-28.** `behaviors/hop.py` registers `hop_both`, `hop_left` and
 `hop_right`: from standing, hop forward and land on exactly the named feet, then
 hold it. A state machine (`_hop_update`) latches the landing only after a real
 flight (≥ `MICRODUCK_HOP_MIN_AIR_S`); the big pay, `land_it`, is a per-step salary
