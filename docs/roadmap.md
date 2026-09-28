@@ -14831,3 +14831,111 @@ ships 0.0 and `Chase.DET_MAX_AGE` reads 0.4 off the class. Agent's re-read:
 `det_max_periods` at `brain/controllers.py` (ChaseParams) and `det_gate` above `class Chase`; pair whiff 47.4 → 50.6 / 48.3 % over 24 seeds, `track_age` 1.88 s at the swing, arrival 24 → 26 cm; loss events 7159 → 1424 and median 0.10 → 1.22 s on the same rollouts — the tables reproduce from the rows.
 Rows: `runs/detrate/gym-detage-2hz-b{0,100}.jsonl` (3 arms × 480 episodes each), `runs/detrate/gym-detage-10hz-b0.jsonl` (3 × 480, the control), `runs/detrate/loss2fix/{shipped,p10}.jsonl` (12 seeds each), read against 12av follow-up (1)'s `runs/detrate/gym-ship2-b{0,100}.jsonl` (reproduced bit for bit) and `runs/detrate/loss{10,2}/shipped.jsonl`.
 Committed: `brain/controllers.py` (the knob, ships OFF), `scripts/probe_ball_loss.py` (the event rule), `tests/test_det_freshness.py` (new). **No default moved, no preset, no policy, no `docs/camera-hardware.md` edit.**
+
+---
+
+## Hopscotch: hop forward, land on both feet / the left foot / the right foot
+
+### H1. [~] The three hop recipes find a flight at all (2026-09-28) — `hop_both` YES: 27/32 clean hops on honest BAM, 4.9 cm, 0 falls
+
+**Answer for `hop_both` (2026-09-28, CPU, 8 envs, the three-stage ladder, 9.5M steps total — 1.5M + 3M + 5M):**
+the exported ONNX policy, deterministic, seeds 200-231, 3 s episodes from standing:
+
+| run | physics it is evaluated on | flight | clean two-foot landing | cm forward (median, range) | air ms (median) | landing held | fell |
+|---|---|---|---|---|---|---|---|
+| `hop-both-s1` (xml, 1.5M) | xml, action delay on | 10/16 | 6/16 | 1.6-6.0 | 60 | 93-100 % | 0/16 |
+| `hop-both-s1` | xml, action delay OFF | 0/16 | 0/16 | - | - | - | 0/16 |
+| `hop-both-s2` (BAM x1.3, 3M) | BAM x1.3 | 20/24 | 20/24 | 4.2 (1.8-6.6) | 60 | 100 % | 0/24 |
+| `hop-both-s3` (BAM x1.0, 5M) | **BAM x1.0, 50 ms floor** | 27/32 | **27/32** | **4.9 (3.9-7.3)** | 100 | 100 % | **0/32** |
+| `hop-both-s3` | BAM x1.0 + domain rand + random yaw | 26/32 | 26/32 | 5.1 (3.7-6.2) | 80 | 100 % | 0/32 |
+
+Two findings worth keeping:
+- **The stage-1 (xml) hop needs action delay.** It hops with the 3-6 step delay the
+  xml path trains with, and never without it (row 2). `render-rollout` builds its env
+  with `action_delay=False`, so its 16 videos of this policy showed no hop at all.
+  Measure hops with the delay on, or you will conclude a hopping policy stands still.
+  On BAM the bus lag is part of the actuator model and this stops mattering.
+- **The 50 ms stage-3 floor is reachable.** The learned push flies ~100 ms. The open-loop
+  push measured in `microduck_rl`'s `measure_hop.py` managed ~30 ms, so the
+  "lower the floor" note below was not needed for `hop_both`.
+
+Commands (seeds and knobs as above; each stage `--init-from` the previous). `--init-from` a
+DIFFERENT run dir is a fine-tune: the counter resets and `--steps` is a fresh budget per stage:
+
+```bash
+MICRODUCK_ACTUATOR=xml MICRODUCK_HOP_MIN_AIR_S=0.03 MICRODUCK_HOP_TARGET_FWD=0.02 \
+  uv run train-behavior hop_both --envs 8 --steps 1500000 --run-name hop-both-s1
+MICRODUCK_ACTUATOR=bam MICRODUCK_BAM_CURRENT_SCALE=1.3 MICRODUCK_HOP_MIN_AIR_S=0.04 MICRODUCK_HOP_TARGET_FWD=0.03 \
+  uv run train-behavior hop_both --envs 8 --steps 3000000 --init-from runs/hop-both-s1 --run-name hop-both-s2
+MICRODUCK_ACTUATOR=bam MICRODUCK_BAM_CURRENT_SCALE=1.0 MICRODUCK_HOP_MIN_AIR_S=0.05 MICRODUCK_HOP_TARGET_FWD=0.04 \
+  uv run train-behavior hop_both --envs 8 --steps 5000000 --init-from runs/hop-both-s2 --run-name hop-both-s3
+```
+
+**Answer for `hop_left` / `hop_right` (2026-09-28):** yes, with two lessons.
+
+1. **They pivot unless the salary cares about heading.** Warm-started from
+   `hop-both-s3` (4.5M more steps, honest BAM) they landed clean on the named foot
+   21/24 and 19/24 and never fell — but ended a median **-119 deg / +98 deg** off the
+   hop line (worst 172 / 176): balance bought by spinning on the stance foot, because
+   `face_home` is capped at 1 unit against a 6-weight salary. `land_it` now carries
+   `exp(-(yaw error / 0.6 rad)^2)` (7a2a628). A 2M-step fine-tune of each fixed
+   `hop_left` (-119 -> **-12 deg** median) but not `hop_right` (+98 -> +53).
+2. **`hop_right` is best as `hop_left` mirrored.** `symmetry.py`'s `mirror_obs` /
+   `mirror_action` are exact signed permutations, so `M_a(pi_left(M_o(obs)))` is a
+   right-foot hop by construction. Baked into one ONNX graph (Gather+Mul either
+   side of the left policy; max |difference| vs the python mirror over 200 random
+   obs: **0.0**), 61 in / 14 out like any skill.
+
+Exported ONNX, deterministic, honest BAM, seeds 300-331, 3 s from standing:
+
+| policy | clean one-foot landing | wrong feet | cm forward (median) | time on one foot after landing | fell | final heading (median, worst) |
+|---|---|---|---|---|---|---|
+| `hop-left-face` | **31/32** | 0 | 6.0 | 67 % | **0/32** | -24 deg, 62 |
+| `hop-right-face` (trained) | 31/32 | 0 | 5.8 | 68 % | 0/32 | +53 deg, 145 |
+| **`hop-left-face` mirrored -> right** | **31/32** | 0 | 6.4 | 68 % | **0/32** | **+25 deg, 74** |
+
+Still open: holding the one-foot stance saturates near 70 % of the post-landing time
+(the free foot comes down late in the episode), and ~25 deg of residual twist.
+
+**Built 2026-09-28.** `behaviors/hop.py` registers `hop_both`, `hop_left` and
+`hop_right`: from standing, hop forward and land on exactly the named feet, then
+hold it. A state machine (`_hop_update`) latches the landing only after a real
+flight (≥ `MICRODUCK_HOP_MIN_AIR_S`); the big pay, `land_it`, is a per-step salary
+for holding a clean landing, scaled by the cm forward at touchdown. `get_air`,
+`launch` and `fly_forward` pay only before the landing, so a bunny-hop cannot farm
+them. The ladder opens on xml servos (a flight has to be samplable before any
+weight matters) and ends on honest BAM at scale 1.0 — the pay is identical in
+every stage (`tests/test_hop_behavior.py` pins it).
+
+Prior art this leans on: TorchRL's `MicroDuckEnv.jump_task` reached ~2 cm hops at
+2 Hz, airborne 15 %, and only once a take-off (`launch`) term paid upward speed with
+the feet still planted; the community `joanfox/microduck-happy-hop` two-foot hop
+runs on hardware. Nobody has published a one-foot LANDING.
+
+```bash
+# the question before any weight: does ANY rollout on stage 1 leave the floor?
+uv run train-behavior hop_both --steps 1500000 --run-name hop-both-probe \
+  --title "Hop, both feet — stage 1 probe" \
+  --description "Does a flight appear on xml servos from standing?" --group hops
+uv run render-rollout --policy runs/hop-both-probe/policy.onnx --behavior hop_both \
+  --episodes 8 --out runs/hop-both-probe/render   # report: flights / landed / cm / held steps
+# then the full ladder, one run per landing
+for l in both left right; do uv run train-behavior hop_$l --title "Hop, land $l"; done
+```
+
+**What decides it:** on BAM servos from standing, over 32 rollouts per recipe, the
+share that end `landed: yes (clean ...)` AND held the stance ≥ 90 % of the remaining
+steps, with the median cm forward at touchdown. If stage 1 shows no flight in any
+rollout, change the world (a stronger xml stage, a crouched spawn), not the pay.
+The GPU / sim2real version lives in `microduck_rl` on the existing forward-hop
+env (`feat/hop-env-training`): `Mjlab-Hop-Flat-MicroDuck` (both feet) plus
+`Mjlab-HopLeft` / `Mjlab-HopRight-Flat-MicroDuck` (one-foot landings), trained
+with `--hf-jobs`.
+
+Measured there, on the same BAM model this lab uses (`scripts/measure_hop.py`,
+trunk pinned upright so it cannot topple): best hand-designed push-off 0.385 m/s,
+~30 mm rise, ~78 ms ballistic flight but ~30 ms measured. So this ladder's
+final 50 ms flight floor is at or past what open-loop pushes reach; the
+community `microduck-max-height-jump` policy shows 140 ms is possible with a
+learned push. If stage 3 never lands, lower `MICRODUCK_HOP_MIN_AIR_S` before
+touching the pay.
