@@ -14838,7 +14838,7 @@ Committed: `brain/controllers.py` (the knob, ships OFF), `scripts/probe_ball_los
 
 ### H1. [~] The three hop recipes find a flight at all (2026-09-28) — `hop_both` YES: 27/32 clean hops on honest BAM, 4.9 cm, 0 falls
 
-**Answer for `hop_both` (2026-09-28, CPU, 8 envs, the three-stage ladder, 5M steps total):**
+**Answer for `hop_both` (2026-09-28, CPU, 8 envs, the three-stage ladder, 9.5M steps total — 1.5M + 3M + 5M):**
 the exported ONNX policy, deterministic, seeds 200-231, 3 s episodes from standing:
 
 | run | physics it is evaluated on | flight | clean two-foot landing | cm forward (median, range) | air ms (median) | landing held | fell |
@@ -14859,7 +14859,8 @@ Two findings worth keeping:
   push measured in `microduck_rl`'s `measure_hop.py` managed ~30 ms, so the
   "lower the floor" note below was not needed for `hop_both`.
 
-Commands (seeds and knobs as above; each stage `--init-from` the previous):
+Commands (seeds and knobs as above; each stage `--init-from` the previous). `--init-from` a
+DIFFERENT run dir is a fine-tune: the counter resets and `--steps` is a fresh budget per stage:
 
 ```bash
 MICRODUCK_ACTUATOR=xml MICRODUCK_HOP_MIN_AIR_S=0.03 MICRODUCK_HOP_TARGET_FWD=0.02 \
