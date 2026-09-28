@@ -14871,7 +14871,31 @@ MICRODUCK_ACTUATOR=bam MICRODUCK_BAM_CURRENT_SCALE=1.0 MICRODUCK_HOP_MIN_AIR_S=0
   uv run train-behavior hop_both --envs 8 --steps 5000000 --init-from runs/hop-both-s2 --run-name hop-both-s3
 ```
 
-Still open: `hop_left` / `hop_right` (warm-started from `hop-both-s3`, running).
+**Answer for `hop_left` / `hop_right` (2026-09-28):** yes, with two lessons.
+
+1. **They pivot unless the salary cares about heading.** Warm-started from
+   `hop-both-s3` (4.5M more steps, honest BAM) they landed clean on the named foot
+   21/24 and 19/24 and never fell — but ended a median **-119 deg / +98 deg** off the
+   hop line (worst 172 / 176): balance bought by spinning on the stance foot, because
+   `face_home` is capped at 1 unit against a 6-weight salary. `land_it` now carries
+   `exp(-(yaw error / 0.6 rad)^2)` (7a2a628). A 2M-step fine-tune of each fixed
+   `hop_left` (-119 -> **-12 deg** median) but not `hop_right` (+98 -> +53).
+2. **`hop_right` is best as `hop_left` mirrored.** `symmetry.py`'s `mirror_obs` /
+   `mirror_action` are exact signed permutations, so `M_a(pi_left(M_o(obs)))` is a
+   right-foot hop by construction. Baked into one ONNX graph (Gather+Mul either
+   side of the left policy; max |difference| vs the python mirror over 200 random
+   obs: **0.0**), 61 in / 14 out like any skill.
+
+Exported ONNX, deterministic, honest BAM, seeds 300-331, 3 s from standing:
+
+| policy | clean one-foot landing | wrong feet | cm forward (median) | time on one foot after landing | fell | final heading (median, worst) |
+|---|---|---|---|---|---|---|
+| `hop-left-face` | **31/32** | 0 | 6.0 | 67 % | **0/32** | -24 deg, 62 |
+| `hop-right-face` (trained) | 31/32 | 0 | 5.8 | 68 % | 0/32 | +53 deg, 145 |
+| **`hop-left-face` mirrored -> right** | **31/32** | 0 | 6.4 | 68 % | **0/32** | **+25 deg, 74** |
+
+Still open: holding the one-foot stance saturates near 70 % of the post-landing time
+(the free foot comes down late in the episode), and ~25 deg of residual twist.
 
 **Built 2026-09-28.** `behaviors/hop.py` registers `hop_both`, `hop_left` and
 `hop_right`: from standing, hop forward and land on exactly the named feet, then
