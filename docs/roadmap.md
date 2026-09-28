@@ -14868,5 +14868,15 @@ for l in both left right; do uv run train-behavior hop_$l --title "Hop, land $l"
 share that end `landed: yes (clean ...)` AND held the stance ≥ 90 % of the remaining
 steps, with the median cm forward at touchdown. If stage 1 shows no flight in any
 rollout, change the world (a stronger xml stage, a crouched spawn), not the pay.
-The GPU / sim2real version is the mjlab port in `microduck_rl`
-(`Mjlab-Hop{Both,Left,Right}-Flat-MicroDuck`, trained with `--hf-jobs`).
+The GPU / sim2real version lives in `microduck_rl` on the existing forward-hop
+env (`feat/hop-env-training`): `Mjlab-Hop-Flat-MicroDuck` (both feet) plus
+`Mjlab-HopLeft` / `Mjlab-HopRight-Flat-MicroDuck` (one-foot landings), trained
+with `--hf-jobs`.
+
+Measured there, on the same BAM model this lab uses (`scripts/measure_hop.py`,
+trunk pinned upright so it cannot topple): best hand-designed push-off 0.385 m/s,
+~30 mm rise, ~78 ms ballistic flight but ~30 ms measured. So this ladder's
+final 50 ms flight floor is at or past what open-loop pushes reach; the
+community `microduck-max-height-jump` policy shows 140 ms is possible with a
+learned push. If stage 3 never lands, lower `MICRODUCK_HOP_MIN_AIR_S` before
+touching the pay.
