@@ -61,7 +61,7 @@ def _flight_steps(seconds: float) -> int:
 
 
 def _hop_and_land(env, touchdown: dict, fwd: float = TARGET_FWD) -> None:
-    _tick(env, BOTH, 3)
+    _tick(env, BOTH, 6)
     _tick(env, AIR, _flight_steps(MIN_AIR_S))
     _place_forward(env, fwd)
     _tick(env, touchdown)
@@ -89,7 +89,7 @@ def test_three_recipes_one_per_landing():
 
 def test_a_short_flight_is_a_shuffle_not_a_landing():
     env = _env("both")
-    _tick(env, BOTH, 3)
+    _tick(env, BOTH, 6)
     _tick(env, AIR, 1)                       # 20 ms: under the 50 ms floor
     _tick(env, BOTH)
     s = _hop_state(env)
@@ -219,12 +219,12 @@ def test_stage_knobs_set_the_strictness_per_instance():
     assert s["min_air"] == pytest.approx(float(first["MICRODUCK_HOP_MIN_AIR_S"]))
     assert s["target_fwd"] == pytest.approx(float(first["MICRODUCK_HOP_TARGET_FWD"]))
     # A 40 ms flight lands on the opening stage and is a shuffle on the last.
-    _tick(env, BOTH, 3)
+    _tick(env, BOTH, 6)
     _tick(env, AIR, 2)
     _tick(env, BOTH)
     assert _hop_state(env)["phase"] == "landed"
     strict = _env("both")
-    _tick(strict, BOTH, 3)
+    _tick(strict, BOTH, 6)
     _tick(strict, AIR, 2)
     _tick(strict, BOTH)
     assert _hop_state(strict)["phase"] == "ground"
@@ -279,3 +279,31 @@ def test_the_hops_do_not_steal_the_neighbours_words():
     assert match_behavior("balance on one foot").id == "one_leg"
     assert match_behavior("stand on both feet").id == "stand"
     assert match_behavior("do a jump backflip").id == "airflip"
+
+
+def test_the_spawn_settle_is_not_a_hop():
+    """Regression (measured 2026-09-28): the drop-in spawn settles through up
+    to two airborne control steps, which cleared the opening stage's 30 ms
+    flight floor - 36 of 64 zero-action episodes latched a 'landing' and
+    collected the in-place salary without hopping. A take-off now only
+    counts after the duck has stood on the floor for SETTLE_S."""
+    free = 0
+    for actuator in ("xml", "bam"):
+        for seed in range(16):
+            env = BehaviorEnv("hop_both", spawn_overrides={"MICRODUCK_HOP_MIN_AIR_S": "0.03"},
+                              actuator_force=actuator, seed=seed)
+            env.reset(seed=seed)
+            for _ in range(40):
+                env.step(np.zeros(14, np.float32))
+            free += _hop_state(env)["phase"] == "landed"
+    assert free == 0, f"{free}/32 zero-action episodes latched a landing"
+
+
+def test_a_take_off_needs_the_settle_first():
+    env = _env("both")
+    _tick(env, BOTH, 2)                      # 40 ms on the floor: still settling
+    _tick(env, AIR, 4)
+    assert _hop_state(env)["phase"] == "ground" and _hop_state(env)["takeoffs"] == 0
+    _tick(env, BOTH, 6)                      # 120 ms: settled
+    _tick(env, AIR, 1)
+    assert _hop_state(env)["phase"] == "air"

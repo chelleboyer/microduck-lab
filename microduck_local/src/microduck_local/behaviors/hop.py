@@ -23,7 +23,7 @@ What is already known about hopping this robot, and what the pay is built on:
 The hop is a small state machine kept by `_hop_update` (the recipe's
 `state_fn`), because "landed" only means something after a real flight:
 
-  ground --both feet off--> air --touchdown after >= min flight--> landed
+  ground --both feet off, after SETTLE_S on the floor--> air --touchdown after >= min flight--> landed
                               \\--touchdown too soon: a shuffle, back to ground
 
 On touchdown the landing is latched: how far forward of the start it came
@@ -63,6 +63,8 @@ HOP_CLEARANCE = 0.02      # m of foot lift that pays get_air in full (TorchRL's 
 LAUNCH_SPEED = 0.4        # m/s of upward trunk speed, still on the floor, that pays launch in full
 FLY_SPEED = 0.3           # m/s forward while airborne that pays fly_forward in full
 LAND_WINDOW_S = 0.08      # s the second foot has to follow the first for a two-foot landing
+SETTLE_S = 0.1            # s on the floor before a take-off counts: the drop-in spawn settles
+                          # through up to 2 airborne steps (measured), which is not a hop
 LAND_FLOOR = 0.25         # share of land_it a clean landing earns with zero forward distance
 LINE_SCALE = 6.0          # off_line saturates one unit at ~41 cm off the line (stay_home's scale)
 
@@ -109,6 +111,7 @@ def _hop_fresh(env) -> dict:
     s = env._hop = {
         "episode": getattr(env, "episode_id", None),
         "phase": "ground",       # ground | air | pending | landed
+        "ground_s": 0.0,         # time on the floor since the last flight (the settle gate)
         "air_s": 0.0,            # current flight time
         "flight_s": 0.0,         # the flight that ended in the landing
         "pending_s": 0.0,        # time since first touchdown (two-foot landings)
@@ -129,14 +132,18 @@ def _hop_update_for(landing: str):
         c = env.foot_contact_state
         airborne = not (c["left"] or c["right"])
         if s["phase"] == "ground":
-            if airborne:
+            if not airborne:
+                s["ground_s"] += C.CTRL_DT
+            elif s["ground_s"] >= SETTLE_S - 1e-9:
                 s["phase"], s["air_s"] = "air", C.CTRL_DT
                 s["takeoffs"] += 1
+            else:
+                s["ground_s"] = 0.0                        # still settling: not a take-off
         elif s["phase"] == "air":
             if airborne:
                 s["air_s"] += C.CTRL_DT
             elif s["air_s"] < s["min_air"]:
-                s["phase"], s["air_s"] = "ground", 0.0     # a shuffle, not a hop
+                s["phase"], s["air_s"], s["ground_s"] = "ground", 0.0, 0.0   # a shuffle
             else:
                 s["flight_s"] = s["air_s"]
                 s["land_fwd"] = _fwd_lat(env)[0]
