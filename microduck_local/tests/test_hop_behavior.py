@@ -307,3 +307,24 @@ def test_a_take_off_needs_the_settle_first():
     _tick(env, BOTH, 6)                      # 120 ms: settled
     _tick(env, AIR, 1)
     assert _hop_state(env)["phase"] == "air"
+
+
+def test_the_salary_is_paid_facing_down_the_hop_line():
+    """Regression (measured 2026-09-28): hop_left / hop_right learned to pivot
+    on the stance foot after landing, ending a median -119 / +98 deg off the
+    hop line, because the capped face_home penalty was cheap next to the
+    salary. land_it now carries a heading factor."""
+    env = _env("left")
+    _hop_and_land(env, LEFT)
+    straight = _pay(env, "land_it")
+    assert straight > 0.5
+    for deg, most in ((30.0, 0.9), (90.0, 0.05), (180.0, 0.01)):
+        env.home_yaw = _trunk_yaw_of(env) - math.radians(deg)
+        assert _pay(env, "land_it") < most * straight, deg
+    env.home_yaw = _trunk_yaw_of(env) - math.radians(-90.0)
+    assert _pay(env, "land_it") < 0.05 * straight                  # either direction
+
+
+def _trunk_yaw_of(env) -> float:
+    from microduck_local.behaviors.core import _trunk_yaw
+    return _trunk_yaw(env)

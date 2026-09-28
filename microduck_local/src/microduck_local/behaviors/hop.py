@@ -52,6 +52,7 @@ from .core import (
     _register,
     _soft_landing_pen,
     _spawn_knob,
+    _trunk_yaw,
     _upright,
     _upright_term,
 )
@@ -67,6 +68,10 @@ SETTLE_S = 0.1            # s on the floor before a take-off counts: the drop-in
                           # through up to 2 airborne steps (measured), which is not a hop
 LAND_FLOOR = 0.25         # share of land_it a clean landing earns with zero forward distance
 LINE_SCALE = 6.0          # off_line saturates one unit at ~41 cm off the line (stay_home's scale)
+FACING_STD = 0.6          # rad: land_it's heading factor, exp(-(yaw error / FACING_STD)^2) —
+                          # 0.9 at 10 deg, 0.37 at 34 deg, 0.05 at 60 deg. Measured 2026-09-28: without
+                          # it the one-foot landings pivot on the stance foot after touching down
+                          # (median -119 / +98 deg by episode end) while hop_both stays within 15 deg.
 
 # Strictness knobs (the ladder moves these, never the pay).
 MIN_AIR_S = 0.05          # s of flight before a touchdown counts as a landing
@@ -212,17 +217,31 @@ def _fly_forward(env) -> float:
 def _land_it_for(landing: str):
     def _land_it(env) -> float:
         """The salary: after a clean landing, every step on exactly the named
-        feet, upright, scaled by how far forward it came down (0..1)."""
+        feet, upright, still facing down the hop line, scaled by how far
+        forward it came down (0..1)."""
         s = _hop_state(env)
         if s["phase"] != "landed" or not s["clean"]:
             return 0.0
         if not _stance_ok(landing, env.foot_contact_state):
             return 0.0
         dist = float(np.clip(s["land_fwd"] / s["target_fwd"], 0.0, 1.0))
-        return (LAND_FLOOR + (1.0 - LAND_FLOOR) * dist) * _upright(env)
+        return (LAND_FLOOR + (1.0 - LAND_FLOOR) * dist) * _upright(env) * _facing(env)
 
     _land_it.__name__ = f"_land_it_{landing}"
     return _land_it
+
+
+def _facing(env) -> float:
+    """1 facing the heading the episode started with, falling off with the yaw
+    error (0..1). Part of the salary rather than a separate penalty: the
+    capped face_home penalty (1 unit) was cheap next to a 6-weight salary, so
+    the one-foot landings bought balance by pivoting on the stance foot."""
+    home = getattr(env, "home_yaw", None)
+    if home is None:
+        return 1.0
+    d = _trunk_yaw(env) - home
+    d = math.atan2(math.sin(d), math.cos(d))
+    return math.exp(-(d / FACING_STD) ** 2)
 
 
 def _off_line_pen(env) -> float:
